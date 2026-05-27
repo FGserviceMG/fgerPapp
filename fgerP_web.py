@@ -1,31 +1,65 @@
 import streamlit as st
 from datetime import datetime
+import json
+import os
 
 # 1. Configuração da página web
-st.set_page_config(page_title="FgERP - Fluxo de Caixa Avançado", layout="centered")
+st.set_page_config(page_title="FgERP - Banco de Dados Permanente", layout="centered")
 
 # =========================================================================
-# 2. INICIALIZAÇÃO FIXA DO BANCO DE DADOS
+# 2. SISTEMA DE ARMAZENAMENTO PERMANENTE (ARQUIVOS JSON)
 # =========================================================================
+ARQUIVO_ESTOQUE = "banco_estoque.json"
+ARQUIVO_CLIENTES = "banco_clientes.json"
+ARQUIVO_VENDAS = "banco_vendas.json"
+ARQUIVO_FINANCEIRO = "banco_financeiro.json"
+
+# Função para carregar dados do arquivo de texto para a memória do sistema
+def carregar_dados_arquivo(nome_arquivo):
+    if os.path.exists(nome_arquivo):
+        try:
+            with open(nome_arquivo, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return {} if "banco_vendas" not in nome_arquivo and "banco_financeiro" not in nome_arquivo else []
+    # Retorna dicionário ou lista vazia dependendo do arquivo se ele não existir
+    if "banco_vendas" in nome_arquivo or "banco_financeiro" in nome_arquivo:
+        return []
+    return {}
+
+# Função para salvar os dados da memória de volta para o arquivo de texto
+def salvar_dados_arquivo(dados, nome_arquivo):
+    with open(nome_arquivo, "w", encoding="utf-8") as f:
+        json.dump(dados, f, indent=4, ensure_ascii=False)
+
+# --- INICIALIZAÇÃO INTEGRADA (Lê os arquivos salvos ao invés de começar do zero) ---
 if "estoque" not in st.session_state:
-    st.session_state.estoque = {}
-if "clientes" not in st.session_state:
-    st.session_state.clientes = {}
-if "vendas" not in st.session_state:
-    st.session_state.vendas = []
-if "financeiro" not in st.session_state:
-    st.session_state.financeiro = []
+    # Como o JSON transforma chaves de dicionário em texto, convertemos de volta para número (ID)
+    dados_carregados = carregar_dados_arquivo(ARQUIVO_ESTOQUE)
+    st.session_state.estoque = {int(k): v for k, v in dados_carregados.items()}
 
+if "clientes" not in st.session_state:
+    dados_carregados = carregar_dados_arquivo(ARQUIVO_CLIENTES)
+    st.session_state.clientes = {int(k): v for k, v in dados_carregados.items()}
+
+if "vendas" not in st.session_state:
+    st.session_state.vendas = carregar_dados_arquivo(ARQUIVO_VENDAS)
+
+if "financeiro" not in st.session_state:
+    st.session_state.financeiro = carregar_dados_arquivo(ARQUIVO_FINANCEIRO)
+
+# Define os próximos IDs com base no que já está cadastrado para não duplicar
 if "proximo_id_prod" not in st.session_state:
-    st.session_state.proximo_id_prod = 1
+    st.session_state.proximo_id_prod = max(st.session_state.estoque.keys()) + 1 if st.session_state.estoque else 1
 if "proximo_id_cli" not in st.session_state:
-    st.session_state.proximo_id_cli = 1
+    st.session_state.proximo_id_cli = max(st.session_state.clientes.keys()) + 1 if st.session_state.clientes else 1
+
 if "menu_atual" not in st.session_state:
     st.session_state.menu_atual = "Início"
 if "logado" not in st.session_state:
     st.session_state.logado = False
 
-# Função auxiliar para recalcular limites
+# Função auxiliar para recalcular limites (Mantida e integrada para salvar as mudanças)
 def atualizar_limite_cliente(id_cliente):
     cliente = st.session_state.clientes[id_cliente]
     limite_calculado = cliente["renda"] * 0.30
@@ -47,6 +81,8 @@ def atualizar_limite_cliente(id_cliente):
     else:
         cliente["status_credito"] = "Regular"
     cliente["limite_credito"] = max(0.0, limite_calculado)
+    # Salva a alteração do limite no arquivo
+    salvar_dados_arquivo(st.session_state.clientes, ARQUIVO_CLIENTES)
 
 # =========================================================================
 # 3. VALIDAÇÃO DE ACESSO (LOGIN)
@@ -81,11 +117,11 @@ if st.sidebar.button("🚪 Sair do Sistema"):
 # ==========================================
 if st.session_state.menu_atual == "Início":
     st.title("📊 Painel Principal - FgERP")
-    st.write("Bem-vindo ao Sistema de Gestão Financeira Avançado!")
-    st.info("Acesse o menu lateral para navegar.")
+    st.write("Sistema de Gestão Comercial com Banco de Dados Local Ativo!")
+    st.success("💾 Todos os dados cadastrados nesta sessão estão sendo salvos permanentemente em arquivos JSON.")
 
 # ==========================================
-# TELA 1: MÓDULO DE ESTOQUE (CORRIGIDO)
+# TELA 1: MÓDULO DE ESTOQUE
 # ==========================================
 elif st.session_state.menu_atual == "Módulo de Estoque":
     st.title("📦 Gestão de Estoque")
@@ -102,38 +138,29 @@ elif st.session_state.menu_atual == "Módulo de Estoque":
         if st.button("Gravar Entrada", key="btn_gravar_produto"):
             if nome.strip() != "":
                 id_atual = st.session_state.proximo_id_prod
-                # Salva no dicionário de estoque
                 st.session_state.estoque[id_atual] = {"nome": nome, "preco": preco, "qtd": qtd}
                 
-                # Gera lançamento financeiro
                 st.session_state.financeiro.append({
-                    "id_lancamento": len(st.session_state.financeiro) + 1, 
-                    "tipo": "Pagar",
-                    "descricao": f"Compra Estoque: {nome}", 
-                    "valor": custo_unitario * qtd,
-                    "forma": forma_pag_custo, 
-                    "status": "Pago" if "À Vista" in forma_pag_custo else "Aberto",
-                    "atrasado": False,
-                    "data_vencimento": vencimento_custo.strftime("%Y-%m-%d")
+                    "id_lancamento": len(st.session_state.financeiro) + 1, "tipo": "Pagar",
+                    "descricao": f"Compra Estoque: {nome}", "valor": custo_unitario * qtd,
+                    "forma": forma_pag_custo, "status": "Pago" if "À Vista" in forma_pag_custo else "Aberto",
+                    "atrasado": False, "data_vencimento": vencimento_custo.strftime("%Y-%m-%d")
                 })
-                
-                # Incrementa o ID para o próximo produto não sobrescrever
                 st.session_state.proximo_id_prod += 1
-                st.success(f"✅ Produto '{nome}' cadastrado com sucesso!")
-                st.rerun()
-            else:
-                st.error("❌ Erro: O nome do produto não pode ficar em branco.")
                 
+                # SALVAMENTO EM ARQUIVO REAL
+                salvar_dados_arquivo(st.session_state.estoque, ARQUIVO_ESTOQUE)
+                salvar_dados_arquivo(st.session_state.financeiro, ARQUIVO_FINANCEIRO)
+                
+                st.success(f"✅ Produto '{nome}' cadastrado e salvo no arquivo!")
+                st.rerun()
+
     with aba2:
-        st.subheader("Produtos em Estoque")
-        if not st.session_state.estoque:
-            st.info("Nenhum produto cadastrado até o momento.")
-        else:
-            dados_tabela = [{"ID": id_p, "Produto": info["nome"], "Preço Venda": f"R$ {info['preco']:.2f}", "Quantidade": f"{info['qtd']} un"} for id_p, info in st.session_state.estoque.items()]
-            st.table(dados_tabela)
+        if not st.session_state.estoque: st.info("Nenhum produto cadastrado.")
+        else: st.table([{"ID": id_p, "Produto": info["nome"], "Preço Venda": f"R$ {info['preco']:.2f}", "Quantidade": f"{info['qtd']} un"} for id_p, info in st.session_state.estoque.items()])
 
 # ==========================================
-# TELA 2: MÓDULO DE CLIENTES (CORRIGIDO CORREÇÃO DE CITY -> CIDADE)
+# TELA 2: MÓDULO DE CLIENTES
 # ==========================================
 elif st.session_state.menu_atual == "Módulo de Clientes":
     st.title("👥 Gestão de Clientes e Crédito")
@@ -150,24 +177,21 @@ elif st.session_state.menu_atual == "Módulo de Clientes":
         if st.button("Gravar Cliente", key="btn_gravar_cliente"):
             if nome_cli.strip() != "":
                 id_atual = st.session_state.proximo_id_cli
-                # CORRIGIDO: 'cidade': cidade (antes estava 'city')
                 st.session_state.clientes[id_atual] = {
                     "nome": nome_cli, "telefone": tel, "endereco": endereco, "bairro": bairro, "cidade": cidade,
                     "renda": renda, "limite_credito": renda * 0.30, "status_credito": "Regular (Sem histórico)"
                 }
                 st.session_state.proximo_id_cli += 1
-                st.success("✅ Cliente gravado com sucesso!")
-                st.rerun()
-            else:
-                st.error("Digite o nome do cliente.")
                 
+                # SALVAMENTO EM ARQUIVO REAL
+                salvar_dados_arquivo(st.session_state.clientes, ARQUIVO_CLIENTES)
+                
+                st.success("✅ Cliente gravado e salvo no arquivo!")
+                st.rerun()
+
     with aba2:
-        st.subheader("Análise do Score de Crédito")
-        if not st.session_state.clientes:
-            st.info("Nenhum cliente cadastrado.")
-        else:
-            dados_clientes = [{"ID": id_c, "Nome": info["nome"], "Cidade/Bairro": f"{info['cidade']} - {info['bairro']}", "Renda": f"R$ {info['renda']:.2f}", "LIMITE DISPONÍVEL": f"R$ {info['limite_credito']:.2f}", "Status": info["status_credito"]} for id_c, info in st.session_state.clientes.items()]
-            st.table(dados_clientes)
+        if not st.session_state.clientes: st.info("Nenhum cliente cadastrado.")
+        else: st.table([{"ID": id_c, "Nome": info["nome"], "Cidade/Bairro": f"{info['cidade']} - {info['bairro']}", "Renda": f"R$ {info['renda']:.2f}", "LIMITE DISPONÍVEL": f"R$ {info['limite_credito']:.2f}", "Status": info["status_credito"]} for id_c, info in st.session_state.clientes.items()])
 
 # ==========================================
 # TELA 3: REGISTRAR VENDA
@@ -190,19 +214,26 @@ elif st.session_state.menu_atual == "Registrar Venda":
         
         if st.button("Finalizar Venda"):
             cliente = st.session_state.clientes[id_cli]
-            if st.session_state.estoque[id_prod]["qtd"] < qtd_venda: 
-                st.error("Sem estoque!")
+            if st.session_state.estoque[id_prod]["qtd"] < qtd_venda: st.error("Sem estoque!")
             elif tipo_pagamento in ["Crediário", "Boleto bancário"] and valor_total > cliente["limite_credito"]:
                 st.error("❌ VENDA RECUSADA! Sem limite de crédito.")
             else:
                 st.session_state.estoque[id_prod]["qtd"] -= qtd_venda
+                st.session_state.vendas.append({"cliente": cliente["nome"], "produto": st.session_state.estoque[id_prod]["nome"], "qtd": qtd_venda, "total": valor_total})
+                
                 st.session_state.financeiro.append({
                     "id_lancamento": len(st.session_state.financeiro) + 1, "tipo": "Receber",
                     "descricao": f"Venda: {cliente['nome']}", "valor": valor_total,
                     "forma": tipo_pagamento, "status": "Pago" if tipo_pagamento == "À Vista" else "Aberto",
                     "atrasado": False, "data_vencimento": vencimento_venda.strftime("%Y-%m-%d")
                 })
-                st.success("🎉 Venda processada!")
+                
+                # SALVAMENTO EM ARQUIVO REAL (Atualiza estoque, vendas e financeiro de uma vez)
+                salvar_dados_arquivo(st.session_state.estoque, ARQUIVO_ESTOQUE)
+                salvar_dados_arquivo(st.session_state.vendas, ARQUIVO_VENDAS)
+                salvar_dados_arquivo(st.session_state.financeiro, ARQUIVO_FINANCEIRO)
+                
+                st.success("🎉 Venda processada e gravada com sucesso!")
                 st.rerun()
 
 # ==========================================
@@ -229,34 +260,106 @@ elif st.session_state.menu_atual == "Contas a Pagar / Receber":
                     "descricao": desc_manual, "valor": valor_manual, "forma": forma_manual,
                     "status": status_manual, "atrasado": False, "data_vencimento": venc_manual.strftime("%Y-%m-%d")
                 })
+                # SALVAMENTO EM ARQUIVO REAL
+                salvar_dados_arquivo(st.session_state.financeiro, ARQUIVO_FINANCEIRO)
                 st.success("✅ Conta cadastrada!")
                 st.rerun()
                 
     with aba_fin2:
+        st.subheader("📌 Obrigações (Contas a Pagar)")
         pagar_list = [item for item in st.session_state.financeiro if item["tipo"] == "Pagar"]
-        if not pagar_list: st.info("Nenhum registro.")
+        
+        if not pagar_list:
+            st.info("Nenhum registro de conta a pagar.")
         else:
+            dados_pagar = []
+            contas_abertas_id = []
+            
             for item in pagar_list:
-                cor = "🔴" if item["status"] == "Aberto" else "🟢"
-                st.markdown(f"**{cor} {item['descricao']}**")
-                st.write(f"Valor: R$ {item['valor']:.2f} | Vencimento: {item['data_vencimento']} | Status: {item['status']}")
-                if item["status"] == "Aberto" and st.button(f"Confirmar Pagamento ID: {item['id_lancamento']}"):
-                    item["status"] = "Pago"
+                status_sinal = "🔴 Aberto" if item["status"] == "Aberto" else "🟢 Pago"
+                dados_pagar.append({
+                    "ID": item["id_lancamento"],
+                    "Descrição": item["descricao"],
+                    "Valor": f"R$ {item['valor']:.2f}",
+                    "Vencimento": item["data_vencimento"],
+                    "Forma": item["forma"],
+                    "Situação": status_sinal
+                })
+                if item["status"] == "Aberto":
+                    contas_abertas_id.append(item["id_lancamento"])
+            
+            st.dataframe(dados_pagar, use_container_width=True, hide_index=True)
+            
+            if contas_abertas_id:
+                st.markdown("---")
+                id_para_pagar = st.selectbox("Selecione o ID da conta para dar Baixa (Pagar):", contas_abertas_id, key="sel_id_pagar")
+                if st.button("Confirmar Pagamento da Conta Selecionada", key="btn_confirmar_pagamento"):
+                    for item in st.session_state.financeiro:
+                        if item["id_lancamento"] == id_para_pagar:
+                            item["status"] = "Pago"
+                    salvar_dados_arquivo(st.session_state.financeiro, ARQUIVO_FINANCEIRO)
+                    st.success(f"✅ Conta ID {id_para_pagar} marcada como PAGA!")
                     st.rerun()
-                st.divider()
+            else:
+                st.success("🎉 Excelente! Não há contas pendentes de pagamento.")
 
     with aba_fin3:
+        st.subheader("📌 Direitos (Contas a Receber)")
         receber_list = [item for item in st.session_state.financeiro if item["tipo"] == "Receber"]
-        if not receber_list: st.info("Nenhum registro.")
+        
+        if not receber_list:
+            st.info("Nenhum registro de conta a receber.")
         else:
+            dados_receber = []
+            contas_receber_id = []
+            
             for item in receber_list:
-                cor = "🔴" if item["status"] == "Aberto" else "🟢"
-                st.markdown(f"**{cor} {item['descricao']}**")
-                st.write(f"Valor: R$ {item['valor']:.2f} | Vencimento: {item['data_vencimento']} | Status: {item['status']}")
-                if item["status"] == "Aberto" and st.button(f"Liquidar ID: {item['id_lancamento']}"):
-                    item["status"] = "Pago"
+                status_sinal = "🔴 Aberto" if item["status"] == "Aberto" else "🟢 Pago"
+                if item.get("atrasado", False):
+                    status_sinal = "⚠️ Inadimplente"
+                    
+                dados_receber.append({
+                    "ID": item["id_lancamento"],
+                    "Descrição": item["descricao"],
+                    "Valor": f"R$ {item['valor']:.2f}",
+                    "Vencimento": item["data_vencimento"],
+                    "Forma": item["forma"],
+                    "Situação": status_sinal
+                })
+                if item["status"] == "Aberto":
+                    contas_receber_id.append(item["id_lancamento"])
+            
+            st.dataframe(dados_receber, use_container_width=True, hide_index=True)
+            
+            if contas_receber_id:
+                st.markdown("---")
+                id_para_receber = st.selectbox("Selecione o ID da conta para receber/ações:", contas_receber_id, key="sel_id_receber")
+                
+                col_c1, col_c2 = st.columns(2)
+                
+                if col_c1.button("Liquidar (Receber Valor)", key="btn_liq_receber"):
+                    for item in st.session_state.financeiro:
+                        if item["id_lancamento"] == id_para_receber:
+                            item["status"] = "Pago"
+                            for id_c, cli in st.session_state.clientes.items():
+                                if cli["nome"] in item["descricao"]:
+                                    atualizar_limite_cliente(id_c)
+                    salvar_dados_arquivo(st.session_state.financeiro, ARQUIVO_FINANCEIRO)
+                    st.success(f"✅ Saldo do ID {id_para_receber} recebido!")
                     st.rerun()
-                st.divider()
+                    
+                if col_c2.button("⚠️ Marcar como Inadimplente", key="btn_inad_receber"):
+                    for item in st.session_state.financeiro:
+                        if item["id_lancamento"] == id_para_receber:
+                            item["atrasado"] = True
+                            for id_c, cli in st.session_state.clientes.items():
+                                if cli["nome"] in item["descricao"]:
+                                    atualizar_limite_cliente(id_c)
+                    salvar_dados_arquivo(st.session_state.financeiro, ARQUIVO_FINANCEIRO)
+                    st.error(f"🔴 ID {id_para_receber} marcado como inadimplente. Crédito do cliente bloqueado!")
+                    st.rerun()
+            else:
+                st.success("🎉 Nenhuma pendência de recebimento dos clientes.")
 
 # ==========================================
 # TELA 5: FLUXO DE CAIXA DIÁRIO
@@ -276,7 +379,7 @@ elif st.session_state.menu_atual == "📊 Fluxo de Caixa Diário":
             
             entradas_dia = sum(item["valor"] for item in itens_do_dia if item["tipo"] == "Receber")
             saidas_dia = sum(item["valor"] for item in itens_do_dia if item["tipo"] == "Pagar")
-            saldo_dia = entries_dia = entradas_dia - saidas_dia
+            saldo_dia = entradas_dia - saidas_dia
             saldo_acumulado += saldo_dia
             
             with st.expander(f"📅 Dia {data_formatada} | Saldo do Dia: R$ {saldo_dia:.2f}"):
