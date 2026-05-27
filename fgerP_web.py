@@ -1,11 +1,11 @@
 import streamlit as st
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # 1. Configuração da página web
 st.set_page_config(page_title="FgERP - Fluxo de Caixa Avançado", layout="centered")
 
 # =========================================================================
-# 2. INICIALIZAÇÃO FIXA DO BANCO DE DADOS (Com suporte a Datas de Vencimento)
+# 2. INICIALIZAÇÃO FIXA DO BANCO DE DADOS
 # =========================================================================
 if "estoque" not in st.session_state:
     st.session_state.estoque = {}
@@ -14,7 +14,6 @@ if "clientes" not in st.session_state:
 if "vendas" not in st.session_state:
     st.session_state.vendas = []
 if "financeiro" not in st.session_state:
-    # Estrutura atualizada: adicionado 'data_vencimento' no formato YYYY-MM-DD para ordenação correta
     st.session_state.financeiro = []
 
 if "proximo_id_prod" not in st.session_state:
@@ -26,7 +25,7 @@ if "menu_atual" not in st.session_state:
 if "logado" not in st.session_state:
     st.session_state.logado = False
 
-# Função auxiliar para recalcular limites (mantida do módulo anterior)
+# Função auxiliar para recalcular limites
 def atualizar_limite_cliente(id_cliente):
     cliente = st.session_state.clientes[id_cliente]
     limite_calculado = cliente["renda"] * 0.30
@@ -83,14 +82,15 @@ if st.sidebar.button("🚪 Sair do Sistema"):
 if st.session_state.menu_atual == "Início":
     st.title("📊 Painel Principal - FgERP")
     st.write("Bem-vindo ao Sistema de Gestão Financeira Avançado!")
-    st.info("Acesse o novo módulo lateral 'Fluxo de Caixa Diário' para acompanhar a saúde financeira dia a dia.")
+    st.info("Acesse o menu lateral para navegar.")
 
 # ==========================================
-# TELA 1: MÓDULO DE ESTOQUE
+# TELA 1: MÓDULO DE ESTOQUE (CORRIGIDO)
 # ==========================================
 elif st.session_state.menu_atual == "Módulo de Estoque":
     st.title("📦 Gestão de Estoque")
     aba1, aba2 = st.tabs(["➕ Entrada de Estoque", "📋 Listar Produtos"])
+    
     with aba1:
         nome = st.text_input("Nome do produto", key="prod_nome_input")
         preco = st.number_input("Preço de venda (R$)", min_value=0.0, step=0.01, format="%.2f", key="prod_preco_input")
@@ -102,23 +102,43 @@ elif st.session_state.menu_atual == "Módulo de Estoque":
         if st.button("Gravar Entrada", key="btn_gravar_produto"):
             if nome.strip() != "":
                 id_atual = st.session_state.proximo_id_prod
+                # Salva no dicionário de estoque
                 st.session_state.estoque[id_atual] = {"nome": nome, "preco": preco, "qtd": qtd}
+                
+                # Gera lançamento financeiro
                 st.session_state.financeiro.append({
-                    "id_lancamento": len(st.session_state.financeiro) + 1, "tipo": "Pagar",
-                    "descricao": f"Compra Estoque: {nome}", "valor": custo_unitario * qtd,
-                    "forma": forma_pag_custo, "status": "Pago" if "À Vista" in forma_pag_custo else "Aberto",
+                    "id_lancamento": len(st.session_state.financeiro) + 1, 
+                    "tipo": "Pagar",
+                    "descricao": f"Compra Estoque: {nome}", 
+                    "valor": custo_unitario * qtd,
+                    "forma": forma_pag_custo, 
+                    "status": "Pago" if "À Vista" in forma_pag_custo else "Aberto",
+                    "atrasado": False,
                     "data_vencimento": vencimento_custo.strftime("%Y-%m-%d")
                 })
-                st.success(f"✅ Produto cadastrado!")
+                
+                # Incrementa o ID para o próximo produto não sobrescrever
                 st.session_state.proximo_id_prod += 1
+                st.success(f"✅ Produto '{nome}' cadastrado com sucesso!")
                 st.rerun()
+            else:
+                st.error("❌ Erro: O nome do produto não pode ficar em branco.")
+                
+    with aba2:
+        st.subheader("Produtos em Estoque")
+        if not st.session_state.estoque:
+            st.info("Nenhum produto cadastrado até o momento.")
+        else:
+            dados_tabela = [{"ID": id_p, "Produto": info["nome"], "Preço Venda": f"R$ {info['preco']:.2f}", "Quantidade": f"{info['qtd']} un"} for id_p, info in st.session_state.estoque.items()]
+            st.table(dados_tabela)
 
 # ==========================================
-# TELA 2: MÓDULO DE CLIENTES
+# TELA 2: MÓDULO DE CLIENTES (CORRIGIDO CORREÇÃO DE CITY -> CIDADE)
 # ==========================================
 elif st.session_state.menu_atual == "Módulo de Clientes":
     st.title("👥 Gestão de Clientes e Crédito")
     aba1, aba2 = st.tabs(["➕ Cadastrar Novo Cliente", "📋 Listar Fichas de Crédito"])
+    
     with aba1:
         nome_cli = st.text_input("Nome do cliente", key="cli_nome_input")
         tel = st.text_input("Telefone", key="cli_tel_input")
@@ -126,16 +146,28 @@ elif st.session_state.menu_atual == "Módulo de Clientes":
         bairro = st.text_input("Bairro", key="cli_bairro_input")
         cidade = st.text_input("Cidade", key="cli_cid_input")
         renda = st.number_input("Renda Mensal (R$)", min_value=0.0, step=100.0, format="%.2f", key="cli_renda_input")
+        
         if st.button("Gravar Cliente", key="btn_gravar_cliente"):
             if nome_cli.strip() != "":
                 id_atual = st.session_state.proximo_id_cli
+                # CORRIGIDO: 'cidade': cidade (antes estava 'city')
                 st.session_state.clientes[id_atual] = {
-                    "nome": nome_cli, "telefone": tel, "endereco": endereco, "bairro": bairro, "cidade": city,
+                    "nome": nome_cli, "telefone": tel, "endereco": endereco, "bairro": bairro, "cidade": cidade,
                     "renda": renda, "limite_credito": renda * 0.30, "status_credito": "Regular (Sem histórico)"
                 }
-                st.success("✅ Cliente gravado!")
                 st.session_state.proximo_id_cli += 1
+                st.success("✅ Cliente gravado com sucesso!")
                 st.rerun()
+            else:
+                st.error("Digite o nome do cliente.")
+                
+    with aba2:
+        st.subheader("Análise do Score de Crédito")
+        if not st.session_state.clientes:
+            st.info("Nenhum cliente cadastrado.")
+        else:
+            dados_clientes = [{"ID": id_c, "Nome": info["nome"], "Cidade/Bairro": f"{info['cidade']} - {info['bairro']}", "Renda": f"R$ {info['renda']:.2f}", "LIMITE DISPONÍVEL": f"R$ {info['limite_credito']:.2f}", "Status": info["status_credito"]} for id_c, info in st.session_state.clientes.items()]
+            st.table(dados_clientes)
 
 # ==========================================
 # TELA 3: REGISTRAR VENDA
@@ -158,7 +190,8 @@ elif st.session_state.menu_atual == "Registrar Venda":
         
         if st.button("Finalizar Venda"):
             cliente = st.session_state.clientes[id_cli]
-            if st.session_state.estoque[id_prod]["qtd"] < qtd_venda: st.error("Sem estoque!")
+            if st.session_state.estoque[id_prod]["qtd"] < qtd_venda: 
+                st.error("Sem estoque!")
             elif tipo_pagamento in ["Crediário", "Boleto bancário"] and valor_total > cliente["limite_credito"]:
                 st.error("❌ VENDA RECUSADA! Sem limite de crédito.")
             else:
@@ -173,16 +206,16 @@ elif st.session_state.menu_atual == "Registrar Venda":
                 st.rerun()
 
 # ==========================================
-# TELA 4: CONTAS A PAGAR / RECEBER (COM LANÇAMENTO MANUAL DE BOLETOS)
+# TELA 4: CONTAS A PAGAR / RECEBER
 # ==========================================
 elif st.session_state.menu_atual == "Contas a Pagar / Receber":
     st.title("💸 Central de Obrigações e Direitos")
     aba_fin1, aba_fin2, aba_fin3 = st.tabs(["➕ Lançar Boleto Manual", "📉 Contas a Pagar", "📈 Contas a Receber"])
     
     with aba_fin1:
-        st.subheader("Cadastro Manual de Contas / Despesas Fixas")
+        st.subheader("Cadastro Manual de Contas")
         tipo_manual = st.selectbox("Tipo de Lançamento:", ["Pagar (Despesa/Boleto)", "Receber (Outras Receitas)"])
-        desc_manual = st.text_input("Descrição do Boleto (Ex: Boleto Água, Aluguel, Luz):")
+        desc_manual = st.text_input("Descrição do Boleto (Ex: Boleto Água, Aluguel):")
         valor_manual = st.number_input("Valor Nominal (R$):", min_value=0.0, step=10.0, format="%.2f")
         forma_manual = st.selectbox("Forma de Operação:", ["Boleto bancário", "Dinheiro/Pix", "Cartão"])
         venc_manual = st.date_input("Data de Vencimento:", datetime.now())
@@ -193,91 +226,64 @@ elif st.session_state.menu_atual == "Contas a Pagar / Receber":
                 st.session_state.financeiro.append({
                     "id_lancamento": len(st.session_state.financeiro) + 1,
                     "tipo": "Pagar" if "Pagar" in tipo_manual else "Receber",
-                    "descricao": desc_manual,
-                    "valor": valor_manual,
-                    "forma": forma_manual,
-                    "status": status_manual,
-                    "atrasado": False,
-                    "data_vencimento": venc_manual.strftime("%Y-%m-%d")
+                    "descricao": desc_manual, "valor": valor_manual, "forma": forma_manual,
+                    "status": status_manual, "atrasado": False, "data_vencimento": venc_manual.strftime("%Y-%m-%d")
                 })
-                st.success("✅ Conta cadastrada e provisionada no Fluxo de Caixa!")
+                st.success("✅ Conta cadastrada!")
                 st.rerun()
-            else:
-                st.error("Preencha a descrição.")
                 
     with aba_fin2:
-        st.subheader("📌 Obrigações (Contas a Pagar)")
         pagar_list = [item for item in st.session_state.financeiro if item["tipo"] == "Pagar"]
         if not pagar_list: st.info("Nenhum registro.")
         else:
             for item in pagar_list:
                 cor = "🔴" if item["status"] == "Aberto" else "🟢"
-                venc_formatado = datetime.strptime(item["data_vencimento"], "%Y-%m-%d").strftime("%d/%m/%Y")
                 st.markdown(f"**{cor} {item['descricao']}**")
-                st.write(f"Valor: R$ {item['valor']:.2f} | Vencimento: {venc_formatado} | Status: {item['status']}")
+                st.write(f"Valor: R$ {item['valor']:.2f} | Vencimento: {item['data_vencimento']} | Status: {item['status']}")
                 if item["status"] == "Aberto" and st.button(f"Confirmar Pagamento ID: {item['id_lancamento']}"):
                     item["status"] = "Pago"
                     st.rerun()
                 st.divider()
 
     with aba_fin3:
-        st.subheader("📌 Direitos (Contas a Receber)")
         receber_list = [item for item in st.session_state.financeiro if item["tipo"] == "Receber"]
         if not receber_list: st.info("Nenhum registro.")
         else:
             for item in receber_list:
                 cor = "🔴" if item["status"] == "Aberto" else "🟢"
-                venc_formatado = datetime.strptime(item["data_vencimento"], "%Y-%m-%d").strftime("%d/%m/%Y")
                 st.markdown(f"**{cor} {item['descricao']}**")
-                st.write(f"Valor: R$ {item['valor']:.2f} | Vencimento: {venc_formatado} | Status: {item['status']}")
+                st.write(f"Valor: R$ {item['valor']:.2f} | Vencimento: {item['data_vencimento']} | Status: {item['status']}")
                 if item["status"] == "Aberto" and st.button(f"Liquidar ID: {item['id_lancamento']}"):
                     item["status"] = "Pago"
                     st.rerun()
                 st.divider()
 
 # ==========================================
-# TELA 5: NOVO RELATÓRIO - FLUXO DE CAIXA DIÁRIO
+# TELA 5: FLUXO DE CAIXA DIÁRIO
 # ==========================================
 elif st.session_state.menu_atual == "📊 Fluxo de Caixa Diário":
     st.title("📊 Relatório: Fluxo de Caixa Diário")
-    st.write("Visão cronológica de Entradas, Saídas e Saldos baseados nas datas de vencimento.")
     
     if not st.session_state.financeiro:
         st.info("Sem movimentações financeiras para gerar o relatório.")
     else:
-        # Agrupar todas as datas únicas de movimentação para montar o calendário ordenado
         datas_encontradas = sorted(list(set(item["data_vencimento"] for item in st.session_state.financeiro)))
-        
         saldo_acumulado = 0.0
         
         for data_venc in datas_encontradas:
             data_formatada = datetime.strptime(data_venc, "%Y-%m-%d").strftime("%d/%m/%Y")
-            
-            # Filtrar o que vence nesse dia específico
             itens_do_dia = [item for item in st.session_state.financeiro if item["data_vencimento"] == data_venc]
             
             entradas_dia = sum(item["valor"] for item in itens_do_dia if item["tipo"] == "Receber")
             saidas_dia = sum(item["valor"] for item in itens_do_dia if item["tipo"] == "Pagar")
-            saldo_dia = entradas_dia - saidas_dia
+            saldo_dia = entries_dia = entradas_dia - saidas_dia
             saldo_acumulado += saldo_dia
             
-            # Container visual para o dia
             with st.expander(f"📅 Dia {data_formatada} | Saldo do Dia: R$ {saldo_dia:.2f}"):
-                # Mostrar tabelinha de movimentações do dia
-                dados_dia_tabela = []
-                for item in itens_do_dia:
-                    seta = "🟩 (+)" if item["tipo"] == "Receber" else "🟥 (-)"
-                    dados_dia_tabela.append({
-                        "Fluxo": seta,
-                        "Descrição": item["descricao"],
-                        "Forma": item["forma"],
-                        "Valor": f"R$ {item['valor']:.2f}",
-                        "Situação": item["status"]
-                    })
+                dados_dia_tabela = [{"Fluxo": "🟩 (+)" if item["tipo"] == "Receber" else "🟥 (-)", "Descrição": item["descricao"], "Forma": item["forma"], "Valor": f"R$ {item['valor']:.2f}", "Situação": item["status"]} for item in itens_do_dia]
                 st.table(dados_dia_tabela)
                 
-                # Métricas do dia
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Total Entradas", f"R$ {entradas_dia:.2f}")
                 c2.metric("Total Saídas", f"R$ {saidas_dia:.2f}")
-                c3.metric("Saldo Acumulado Geral", f"R$ {saldo_acumulado:.2f}")
+                c3.metric("Saldo Acumulado", f"R$ {saldo_acumulado:.2f}")
